@@ -1,0 +1,1209 @@
+/**
+ * Created by Administrator on 2017/4/23.
+ */
+import jdk.nashorn.internal.scripts.JO;
+
+import java.awt.*;
+import java.awt.event.*;
+import java.text.*;
+import java.util.*;
+import java.io.*;
+import javax.swing.undo.*;
+import javax.swing.border.*;
+import javax.swing.*;
+import javax.swing.text.*;
+import javax.swing.event.*;
+import java.awt.datatransfer.*;
+
+
+public class NotePad extends JFrame implements ActionListener,DocumentListener{
+    public static void main(String[] args) {
+        try{
+            UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+        }catch (Exception e){}
+
+        NotePad notePad = new NotePad();
+        notePad.addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                System.exit(0);
+            }
+        });
+    }
+    JMenu fileMenu, editMenu,formatMenu,viewMenu,helpMenu;
+    JPopupMenu popupMenu;
+    JMenuItem popupMenu_Undo,popupMenu_Cut,popupMenu_Copy,popupMenu_Paste,popupMenu_Delete,popupMenu_SelectAll;
+    JMenuItem fileMenu_New,fileMenu_Open,fileMenu_Save,fileMenu_SaveAs,fileMenu_PageSetUp,fileMenu_Print,fileMenu_Exit;
+    JMenuItem editMenu_Undo,editMenu_Cut,editMenu_Copy,editMenu_Paste,editMenu_Delete,editMenu_Find,
+            editMenu_FindNext,editMenu_Replace,editMenu_GoTo,editMenu_SelectAll,editMenu_TimeDate;
+    JCheckBoxMenuItem formatMenu_LineWrap;
+    JMenuItem formatMenu_Font;
+    JCheckBoxMenuItem viewMenu_Status;
+    JMenuItem helpMenu_HelpTopics,helpMenu_AboutNotePad;
+
+    JTextArea editArea;
+    int line,row;//The caret position in edit area
+    JPanel labelPanel;
+    JLabel statusLabel,positionLabel;
+
+    //SystemClipboard
+    Toolkit toolkit=Toolkit.getDefaultToolkit();
+    Clipboard clipboard=toolkit.getSystemClipboard();
+
+    //Create UndoManager(About undo operation)
+    protected UndoManager undo=new UndoManager();
+    protected UndoableEditListener undoHandler=new UndoHandler();
+
+    //Other variables
+    String oldValue;           //Store the original contents of the editing area, used to compare whether the text changes
+    boolean isNewFile=true;     //Whether new file or not(not saved)
+    File currentFile;           //Current file name
+    String findContent=null;
+
+    //Constructor begin
+    public NotePad(){
+        super("Untitled - NotePad");
+        //Change the System default font
+        Font font=new Font("Dialog",Font.PLAIN,12);
+        java.util.Enumeration keys=UIManager.getDefaults().keys();
+        while(keys.hasMoreElements()){
+            Object key=keys.nextElement();
+            Object value=UIManager.get(key);
+            if(value instanceof javax.swing.plaf.FontUIResource)
+                UIManager.put(key, font);
+        }
+
+        //Create MenuBar
+        JMenuBar menuBar=new JMenuBar();
+        fileMenu=new JMenu("File(F)");
+        fileMenu.setMnemonic('F');
+
+        fileMenu_New=new JMenuItem("New(N)");
+        fileMenu_New.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_N,InputEvent.CTRL_MASK));
+        fileMenu_New.addActionListener(this);
+
+        fileMenu_Open=new JMenuItem("Open(O)...");
+        fileMenu_Open.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_O,InputEvent.CTRL_MASK));
+        fileMenu_Open.addActionListener(this);
+
+        fileMenu_Save=new JMenuItem("Save(S)");
+        fileMenu_Save.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_S,InputEvent.CTRL_MASK));
+        fileMenu_Save.addActionListener(this);
+
+        fileMenu_SaveAs=new JMenuItem("Save as(A)...");
+        fileMenu_SaveAs.addActionListener(this);
+
+        fileMenu_PageSetUp=new JMenuItem("Page SetUp(U)...");
+        fileMenu_PageSetUp.addActionListener(this);
+
+        fileMenu_Print=new JMenuItem("Print(P)...");
+        fileMenu_Print.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_P, InputEvent.CTRL_MASK));
+        fileMenu_Print.addActionListener(this);
+
+        fileMenu_Exit=new JMenuItem("Exit(X)");
+        fileMenu_Exit.addActionListener(this);
+
+        editMenu=new JMenu("Edit(E)");
+        editMenu.setMnemonic('E');
+        //When you select the edit menu, set the usability of cut, copy, paste, delete, and so on
+        editMenu.addMenuListener(
+                new MenuListener() {
+                    @Override
+                    public void menuSelected(MenuEvent e) {
+                        checkMenuItemEnabled();//Set the usability of cut, copy, paste, delete, and so on
+                    }
+
+                    @Override
+                    public void menuDeselected(MenuEvent e) {
+                        checkMenuItemEnabled();
+                    }
+
+                    @Override
+                    public void menuCanceled(MenuEvent e) {
+                        checkMenuItemEnabled();
+                    }
+                }
+        );
+        editMenu_Undo=new JMenuItem("Undo(U)");
+        editMenu_Undo.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_Z,InputEvent.CTRL_MASK));
+        editMenu_Undo.addActionListener(this);
+        editMenu_Undo.setEnabled(false);
+
+        editMenu_Cut=new JMenuItem("Cut(T)");
+        editMenu_Cut.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_X,InputEvent.CTRL_MASK));
+        editMenu_Cut.addActionListener(this);
+
+        editMenu_Copy=new JMenuItem("Copy(C)");
+        editMenu_Copy.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_C,InputEvent.CTRL_MASK));
+        editMenu_Copy.addActionListener(this);
+
+        editMenu_Paste=new JMenuItem("Paste(P)");
+        editMenu_Paste.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_V,InputEvent.CTRL_MASK));
+        editMenu_Paste.addActionListener(this);
+
+        editMenu_Delete=new JMenuItem("Delete(D)");
+        editMenu_Delete.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_DELETE,0));
+        editMenu_Delete.addActionListener(this);
+
+        editMenu_Find=new JMenuItem("Find(F)...");
+        editMenu_Find.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F,InputEvent.CTRL_MASK));
+        editMenu_Find.addActionListener(this);
+
+        editMenu_FindNext=new JMenuItem("Find next(N)");
+        editMenu_FindNext.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F3,0));
+        editMenu_FindNext.addActionListener(this);
+
+        editMenu_Replace = new JMenuItem("Replace(R)...",'R');
+        editMenu_Replace.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_H, InputEvent.CTRL_MASK));
+        editMenu_Replace.addActionListener(this);
+
+        editMenu_GoTo = new JMenuItem("go to(G)...",'G');
+        editMenu_GoTo.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_G, InputEvent.CTRL_MASK));
+        editMenu_GoTo.addActionListener(this);
+
+        editMenu_SelectAll = new JMenuItem("Select all",'A');
+        editMenu_SelectAll.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_A, InputEvent.CTRL_MASK));
+        editMenu_SelectAll.addActionListener(this);
+
+        editMenu_TimeDate = new JMenuItem("Time/Date(D)",'D');
+        editMenu_TimeDate.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F5,0));
+        editMenu_TimeDate.addActionListener(this);
+
+        formatMenu=new JMenu("Format(O)");
+        formatMenu.setMnemonic('O');
+
+        formatMenu_LineWrap = new JCheckBoxMenuItem("Wraps automatically(W)");
+        formatMenu_LineWrap.setMnemonic('W');
+        formatMenu_LineWrap.setState(true);
+        formatMenu_LineWrap.addActionListener(this);
+
+        formatMenu_Font=new JMenuItem("Font(F)...");
+        formatMenu_Font.addActionListener(this);
+
+        viewMenu=new JMenu("View(V)");
+        viewMenu.setMnemonic('V');
+        viewMenu_Status=new JCheckBoxMenuItem("Status Bar(S)");
+        viewMenu_Status.setMnemonic('S');
+        viewMenu_Status.setState(true);
+        viewMenu_Status.setEnabled(false);
+        viewMenu_Status.addActionListener(this);
+
+        helpMenu = new JMenu("Help(H)");
+        helpMenu.setMnemonic('H');
+        helpMenu_HelpTopics = new JMenuItem("Help topics(H)");
+        helpMenu_HelpTopics.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_F1,0));
+        helpMenu_HelpTopics.addActionListener(this);
+
+        helpMenu_AboutNotePad = new JMenuItem("About this  notepad(A)");
+        helpMenu_AboutNotePad.addActionListener(this);
+
+        menuBar.add(fileMenu);
+        fileMenu.add(fileMenu_New);
+        fileMenu.add(fileMenu_Open);
+        fileMenu.add(fileMenu_Save);
+        fileMenu.add(fileMenu_SaveAs);
+        fileMenu.addSeparator();        //separator
+        fileMenu.add(fileMenu_PageSetUp);
+        fileMenu.add(fileMenu_Print);
+        fileMenu.addSeparator();        //separator
+        fileMenu.add(fileMenu_Exit);
+
+
+        menuBar.add(editMenu);
+        editMenu.add(editMenu_Undo);
+        editMenu.addSeparator();        //separator
+        editMenu.add(editMenu_Cut);
+        editMenu.add(editMenu_Copy);
+        editMenu.add(editMenu_Paste);
+        editMenu.add(editMenu_Delete);
+        editMenu.addSeparator();        //separator
+        editMenu.add(editMenu_Find);
+        editMenu.add(editMenu_FindNext);
+        editMenu.add(editMenu_Replace);
+        editMenu.add(editMenu_GoTo);
+        editMenu.addSeparator();        //separator
+        editMenu.add(editMenu_SelectAll);
+        editMenu.add(editMenu_TimeDate);
+
+
+        menuBar.add(formatMenu);
+        formatMenu.add(formatMenu_LineWrap);
+        formatMenu.add(formatMenu_Font);
+
+
+        menuBar.add(viewMenu);
+        viewMenu.add(viewMenu_Status);
+
+
+        menuBar.add(helpMenu);
+        helpMenu.add(helpMenu_HelpTopics);
+        helpMenu.addSeparator();
+        helpMenu.add(helpMenu_AboutNotePad);
+
+        this.setJMenuBar(menuBar);
+
+        editArea = new JTextArea(20, 50);
+        JScrollPane scroller = new JScrollPane(editArea);
+        scroller.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_ALWAYS);
+        this.add(scroller,BorderLayout.CENTER);
+        editArea.setWrapStyleWord(true);//Set the word wrap when the line is insufficient
+        editArea.setLineWrap(true);//Wrap automatically
+        oldValue=editArea.getText();//Get the contents of the original edit area
+
+        editArea.getDocument().addUndoableEditListener(undoHandler);
+        editArea.getDocument().addDocumentListener(this);
+
+        popupMenu=new JPopupMenu();
+        popupMenu_Undo=new JMenuItem("Undo(U)");
+        popupMenu_Cut=new JMenuItem("Cut(T)");
+        popupMenu_Copy=new JMenuItem("Copy(C)");
+        popupMenu_Paste=new JMenuItem("Paste(P)");
+        popupMenu_Delete=new JMenuItem("Delete(D)");
+        popupMenu_SelectAll=new JMenuItem("Select all(A)");
+
+        popupMenu_Undo.setEnabled(false);
+
+        popupMenu.add(popupMenu_Undo);
+        popupMenu.addSeparator();
+        popupMenu.add(popupMenu_Cut);
+        popupMenu.add(popupMenu_Copy);
+        popupMenu.add(popupMenu_Paste);
+        popupMenu.add(popupMenu_Delete);
+        popupMenu.addSeparator();
+        popupMenu.add(popupMenu_SelectAll);
+
+        popupMenu_Undo.addActionListener(this);
+        popupMenu_Cut.addActionListener(this);
+        popupMenu_Copy.addActionListener(this);
+        popupMenu_Paste.addActionListener(this);
+        popupMenu_Delete.addActionListener(this);
+        popupMenu_SelectAll.addActionListener(this);
+
+        editArea.addMouseListener(new MouseAdapter()
+        {   public void mousePressed(MouseEvent e)
+        {   if(e.isPopupTrigger())//Return whether this mouse event triggered an event for the platform's pop-up menu
+        {   popupMenu.show(e.getComponent(),e.getX(),e.getY());
+        }
+            checkMenuItemEnabled();//Set the usability of cut, copy, paste, delete and so on
+            editArea.requestFocus();//Edit area gets focus
+        }
+            public void mouseReleased(MouseEvent e)
+            {   if(e.isPopupTrigger())
+            {
+                popupMenu.show(e.getComponent(), e.getX(), e.getY());
+            }
+                checkMenuItemEnabled();
+                editArea.requestFocus();
+            }
+        });
+        editArea.addCaretListener(new CaretListener() {
+            @Override
+            public void caretUpdate(CaretEvent e) {
+                int pos=editArea.getCaretPosition();
+                try {
+                    editArea.requestFocus();
+                    int row = editArea.getLineOfOffset(pos);
+                    int col=pos-editArea.getLineStartOffset(row)+1 ;
+                    row+=1;
+                    positionLabel.setText("Row:" + row +
+                            "   Col:" + col);
+                }catch(BadLocationException ex){
+                    positionLabel.setText("Can't get caret postion");}
+            }
+
+        });
+
+        statusLabel=new JLabel("　Press F1 to get help.");
+        try {
+            editArea.requestFocus();
+            int pos=editArea.getCaretPosition();
+            int row=editArea.getLineOfOffset(pos);
+            int col=pos-editArea.getLineStartOffset(row)+1;
+            row+=1;
+            positionLabel = new JLabel("Row:" + row +
+                    "   Col:" + col);
+        }catch(BadLocationException ex){
+            positionLabel.setText("Can't get caret postion");}
+        GridBagLayout gb=new GridBagLayout();
+        labelPanel=new JPanel(gb);
+        //labelPanel.add(statusLabel);
+       // labelPanel.add(positionLabel);
+        GridBagConstraints s = new GridBagConstraints();
+        s.weightx=1;
+        s.anchor=GridBagConstraints.WEST;
+        GridBagConstraints s1= new GridBagConstraints();
+        labelPanel.add(statusLabel,s);
+        s1.ipadx=100;
+        labelPanel.add(positionLabel,s1);
+        this.add(labelPanel,BorderLayout.SOUTH);
+        this.setLocation(100,100);
+        this.setSize(650,550);
+        this.setVisible(true);
+
+        addWindowListener(new WindowAdapter()
+        {
+            public void windowClosing(WindowEvent e)
+        {   exitWindowChoose();}
+        });
+        editMenu_GoTo.setEnabled(false);
+        checkMenuItemEnabled();
+        editArea.requestFocus();
+    }//Constructor end
+
+    public void checkMenuItemEnabled() {
+        String selectText=editArea.getText();
+        if(selectText==null||selectText.equals("")){
+            editMenu_Cut.setEnabled(false);
+            popupMenu_Cut.setEnabled(false);
+            editMenu_Copy.setEnabled(false);
+            popupMenu_Copy.setEnabled(false);
+            editMenu_Delete.setEnabled(false);
+            popupMenu_Delete.setEnabled(false);
+            editMenu_Find.setEnabled(false);
+            editMenu_FindNext.setEnabled(false);
+        }
+        else{
+            editMenu_Cut.setEnabled(true);
+            popupMenu_Cut.setEnabled(true);
+            editMenu_Copy.setEnabled(true);
+            popupMenu_Copy.setEnabled(true);
+            editMenu_Delete.setEnabled(true);
+            popupMenu_Delete.setEnabled(true);
+            editMenu_Find.setEnabled(true);
+            editMenu_FindNext.setEnabled(true);
+        }
+        Transferable content = clipboard.getContents(this);
+        if(content==null){
+            editMenu_Paste.setEnabled(false);
+            popupMenu_Paste.setEnabled(false);
+        }else{
+            editMenu_Paste.setEnabled(true);
+            popupMenu_Paste.setEnabled(true);
+        }
+    }//End of checkMenuItemEnabled
+
+    //Invoke when the window is closing
+    public void exitWindowChoose() {
+        editArea.requestFocus();
+        String currentcotents=editArea.getText();
+        if(currentcotents.equals(oldValue))
+            System.exit(0);
+        else{
+            int exitChoose=JOptionPane.showConfirmDialog(this,"Your file hasn't been" +
+                    "saved, save or not?", "Exit prompt",JOptionPane.YES_NO_CANCEL_OPTION);
+            if(exitChoose==JOptionPane.YES_OPTION){
+                saveFile();
+                System.exit(0);
+            }
+            else if(exitChoose==JOptionPane.NO_OPTION)
+                System.exit(0);
+            else return;
+        }
+    }//End of exitWindowChoose
+
+    public void find(){
+        //False allows other windows to be active at the same time(ie, no mode)
+        final JDialog findDialog=new JDialog(this,"Find",false);
+        Container con=findDialog.getContentPane();
+        con.setLayout(new FlowLayout(FlowLayout.LEFT));
+        JLabel findContentLabel = new JLabel("Find content(N):");
+        final JTextField findText = new JTextField(15);
+        JButton findNextButton=new JButton("Find next(F)");
+        final JCheckBox matchCheckBox=new JCheckBox("Case sensitive(C)");
+        ButtonGroup bGroup=new ButtonGroup();
+        final JRadioButton upButton=new JRadioButton("Up(U)");
+        final JRadioButton downButton=new JRadioButton("Down(D)");
+        downButton.setSelected(true);
+        bGroup.add(upButton);
+        bGroup.add(downButton);
+
+        JButton cancel=new JButton("Cancel");
+        cancel.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e)
+            {   findDialog.dispose();
+            }
+        });
+        findNextButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                int k=0,m=0;
+                final String str1,str2,str3,str4,strA,strB;
+                str1=editArea.getText();
+                findContent=str2=findText.getText();
+                str3=str1.toLowerCase();
+                str4=str2.toLowerCase();
+                if(matchCheckBox.isSelected()){//Case sensitive
+                    strA=str1;
+                    strB=str2;
+                }
+                else{//Not case sensitive
+                    strA=str3;
+                    strB=str4;
+                }
+                if(upButton.isSelected())
+                {   //k=strA.lastIndexOf(strB,editArea.getCaretPosition()-1);
+                    if(editArea.getSelectedText()==null)
+                        k=strA.lastIndexOf(strB,editArea.getCaretPosition()-1);
+                    else
+                        k=strA.lastIndexOf(strB, editArea.getCaretPosition()-findText.getText().length()-1);
+                    if(k>-1)
+                    {   //String strData=strA.subString(k,strB.getText().length()+1);
+                        editArea.setCaretPosition(k);
+                        editArea.select(k,k+strB.length());
+                    }
+                    else
+                    {   JOptionPane.showMessageDialog(null,"Can't find "+
+                            findText.getText(),"find",JOptionPane.INFORMATION_MESSAGE);
+                    }
+                }
+                else if(downButton.isSelected())
+                {   if(editArea.getSelectedText()==null)
+                    k=strA.indexOf(strB,editArea.getCaretPosition()+1);
+                else
+                    k=strA.indexOf(strB, editArea.getCaretPosition()-findText.getText().length()+1);
+                    if(k>-1)
+                    {   //String strData=strA.subString(k,strB.getText().length()+1);
+                        editArea.setCaretPosition(k);
+                        editArea.select(k,k+strB.length());
+                    }
+                    else
+                    {   JOptionPane.showMessageDialog(null,"Can't find"+
+                            findText.getText(),"查找",JOptionPane.INFORMATION_MESSAGE);
+                    }
+                }
+            }
+        });//End of find next;
+        //Create the interface for the Find dialog box
+        JPanel panel1=new JPanel();
+        JPanel panel2=new JPanel();
+        JPanel panel3=new JPanel();
+        JPanel directionPanel=new JPanel();
+        directionPanel.setBorder(BorderFactory.createTitledBorder("Directory"));
+        directionPanel.add(upButton);
+        directionPanel.add(downButton);
+        panel1.setLayout(new GridLayout(2,1));
+        panel1.add(findNextButton);
+        panel1.add(cancel);
+        panel2.add(findContentLabel);
+        panel2.add(findText);
+        panel2.add(panel1);
+        panel3.add(matchCheckBox);
+        panel3.add(directionPanel);
+        con.add(panel2);//Layout Manager still has some problem
+        con.add(panel1);
+        con.add(panel3);
+        findDialog.setSize(410,180);
+        findDialog.setResizable(false);
+        findDialog.setLocation(230,280);
+        findDialog.setVisible(true);
+    }//End of find
+
+    public void replace(){
+        final JDialog replaceDialog=new JDialog(this,"replace",false);
+        Container con=replaceDialog.getContentPane();
+        con.setLayout(new FlowLayout(FlowLayout.CENTER));
+        JLabel findContentLabel=new JLabel("Find content(N)：");
+        final JTextField findText=new JTextField(15);
+        JButton findNextButton=new JButton("Find next(F):");
+        JLabel replaceLabel=new JLabel("Replace as(P)：");
+        final JTextField replaceText=new JTextField(15);
+        JButton replaceButton=new JButton("Replace(R)");
+        JButton replaceAllButton=new JButton("Replace all(A)");
+        JButton cancel=new JButton("Cancel");
+        cancel.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e)
+            {   replaceDialog.dispose();
+            }
+        });
+        final JCheckBox matchCheckBox=new JCheckBox("Case sensitive(C)");
+        ButtonGroup bGroup=new ButtonGroup();
+        final JRadioButton upButton=new JRadioButton("Up(U)");
+        final JRadioButton downButton=new JRadioButton("Down(D)");
+        downButton.setSelected(true);
+        bGroup.add(upButton);
+        bGroup.add(downButton);
+        findNextButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                int k=0,m=0;
+                final String str1,str2,str3,str4,strA,strB;
+                str1=editArea.getText();
+                str2=findText.getText();
+                str3=str1.toLowerCase();
+                str4=str2.toLowerCase();
+                if(matchCheckBox.isSelected()){//Case sensitive
+                    strA=str1;
+                    strB=str2;
+                }
+                else{//Not case sensitive
+                    strA=str3;
+                    strB=str4;
+                }
+                if(upButton.isSelected())
+                {   //k=strA.lastIndexOf(strB,editArea.getCaretPosition()-1);
+                    if(editArea.getSelectedText()==null)
+                        k=strA.lastIndexOf(strB,editArea.getCaretPosition()-1);
+                    else
+                        k=strA.lastIndexOf(strB, editArea.getCaretPosition()-findText.getText().length()-1);
+                    if(k>-1)
+                    {   //String strData=strA.subString(k,strB.getText().length()+1);
+                        editArea.setCaretPosition(k);
+                        editArea.select(k,k+strB.length());
+                    }
+                    else
+                    {   JOptionPane.showMessageDialog(null,"Can't find "+
+                            findText.getText(),"find",JOptionPane.INFORMATION_MESSAGE);
+                    }
+                }
+                else if(downButton.isSelected())
+                {   if(editArea.getSelectedText()==null)
+                    k=strA.indexOf(strB,editArea.getCaretPosition()+1);
+                else
+                    k=strA.indexOf(strB, editArea.getCaretPosition()-findText.getText().length()+1);
+                    if(k>-1)
+                    {   //String strData=strA.subString(k,strB.getText().length()+1);
+                        editArea.setCaretPosition(k);
+                        editArea.select(k,k+strB.length());
+                    }
+                    else
+                    {   JOptionPane.showMessageDialog(null,"Can't find"+
+                            findText.getText(),"查找",JOptionPane.INFORMATION_MESSAGE);
+                    }
+                }
+            }
+        });//End of find next;
+        replaceButton.addActionListener(new ActionListener() {
+            public void actionPerformed(ActionEvent e) {
+                int k=0,m=0;
+                final String str1,str2,str3,str4,strA,strB;
+                str1=editArea.getText();
+                str2=findText.getText();
+                str3=str1.toLowerCase();
+                str4=str2.toLowerCase();
+                if(matchCheckBox.isSelected()){//Case sensitive
+                    strA=str1;
+                    strB=str2;
+                }
+                else{//Not case sensitive
+                    strA=str3;
+                    strB=str4;
+                }
+                if(upButton.isSelected())
+                {   //k=strA.lastIndexOf(strB,editArea.getCaretPosition()-1);
+                    if(editArea.getSelectedText()==null)
+                        k=strA.lastIndexOf(strB,editArea.getCaretPosition()-1);
+                    else
+                        k=strA.lastIndexOf(strB, editArea.getCaretPosition()-findText.getText().length()-1);
+                    if(k>-1)
+                    {   //String strData=strA.subString(k,strB.getText().length()+1);
+                        editArea.setCaretPosition(k);
+                        editArea.select(k,k+strB.length());
+                    }
+                    else
+                    {   JOptionPane.showMessageDialog(null,"Can't find "+
+                            findText.getText(),"find",JOptionPane.INFORMATION_MESSAGE);
+                    }
+                }
+                else if(downButton.isSelected())
+                {   if(editArea.getSelectedText()==null)
+                    k=strA.indexOf(strB,editArea.getCaretPosition()+1);
+                else
+                    k=strA.indexOf(strB, editArea.getCaretPosition()-findText.getText().length()+1);
+                    if(k>-1)
+                    {   //String strData=strA.subString(k,strB.getText().length()+1);
+                        editArea.setCaretPosition(k);
+                        editArea.select(k,k+strB.length());
+                    }
+                    else
+                    {   JOptionPane.showMessageDialog(null,"Can't find"+
+                            findText.getText(),"查找",JOptionPane.INFORMATION_MESSAGE);
+                    }
+                }
+                if(replaceText.getText().length()!=0&&editArea.getSelectedText()!=null)
+                    editArea.replaceSelection(replaceText.getText());
+                if(replaceText.getText().length()==0&&editArea.getSelectedText()!=null)
+                    editArea.replaceSelection("");
+
+            }
+        });//End of Replace Button
+        replaceAllButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                editArea.setCaretPosition(0);//Place the cursor at the beginning of  the editarea
+                int m=0,k=0,replaceCount=0;
+                if(findText.getText().length()==0){
+                    JOptionPane.showMessageDialog(replaceDialog,"Please fill in the search",
+                            "Prompt",JOptionPane.WARNING_MESSAGE);
+                    findText.requestFocus();
+                    return;
+                }
+                while(k>-1){//Replace when the contents of the text are selected(k>-1)
+                    final String str1,str2,str3,str4,strA,strB;
+                    str1=editArea.getText();
+                    str2=findText.getText();
+                    str3=str1.toUpperCase();
+                    str4=str2.toUpperCase();
+                    if(matchCheckBox.isSelected())
+                    {   strA=str1;
+                        strB=str2;
+                    }
+                    else
+                    {   strA=str3;
+                        strB=str4;
+                    }
+                    k=strA.indexOf(strB,editArea.getCaretPosition()+1);
+                    if(k>-1)
+                    {   //String strData=strA.subString(k,strB.getText().length()+1);
+                        editArea.setCaretPosition(k);
+                        editArea.select(k,k+strB.length());
+                        if(replaceText.getText().length()==0 && editArea.getSelectedText()!= null)
+                        {   editArea.replaceSelection("");
+                            replaceCount++;
+                        }
+
+                        if(replaceText.getText().length()>0 && editArea.getSelectedText()!= null)
+                        {   editArea.replaceSelection(replaceText.getText());
+                            replaceCount++;
+                        }
+                    }
+                    else
+                    {   if(replaceCount==0)
+                    {   JOptionPane.showMessageDialog(replaceDialog, "Can't find what you want",
+                            "NotePad",JOptionPane.INFORMATION_MESSAGE);
+                    }
+                    else
+                    {   JOptionPane.showMessageDialog(replaceDialog,"Successfully replace"
+                            +replaceCount+"matching contents!","Replace successfully",JOptionPane.INFORMATION_MESSAGE);
+                    }
+
+                    }
+                }
+            }
+        });//End of ReplaceAll
+
+        //Create the interface of "Replace" dialog
+        JPanel directionPanel =new JPanel();
+        directionPanel.setBorder(BorderFactory.createTitledBorder("Direction"));
+        directionPanel.add(upButton);
+        directionPanel.add(downButton);
+        JPanel panel1=new JPanel();
+        JPanel panel2=new JPanel();
+        JPanel panel3=new JPanel();
+        JPanel panel4=new JPanel();
+        panel4.setLayout(new GridLayout(2,1));
+        panel1.add(findContentLabel);
+        panel1.add(findText);
+        panel1.add(findNextButton);
+        panel4.add(replaceButton);
+        panel4.add(replaceAllButton);
+        panel2.add(replaceLabel);
+        panel2.add(replaceText);
+        panel2.add(panel4);
+        panel3.add(matchCheckBox);
+        panel3.add(directionPanel);
+        panel3.add(cancel);
+        con.add(panel1);
+        con.add(panel2);
+        con.add(panel3);
+        replaceDialog.setSize(420,220);
+        replaceDialog.setResizable(false);
+        replaceDialog.setLocation(230,280);
+        replaceDialog.setVisible(true);
+    }
+
+    public void font(){
+        final JDialog fontDialog=new JDialog(this,"Font setting",false);
+        Container con=fontDialog.getContentPane();
+        con.setLayout(null);
+        JLabel fontLabel=new JLabel("Font(F):");
+        fontLabel.setPreferredSize(new Dimension(100, 20));
+        JLabel styleLabel=new JLabel("Style(Y):");
+        styleLabel.setPreferredSize(new Dimension(100, 20));
+        JLabel sizeLabel=new JLabel("Size(S):");
+        sizeLabel.setPreferredSize(new Dimension(100, 20));
+        final JLabel sample =new JLabel("LXY's Notepad");
+        final JTextField fontText=new JTextField(9);
+        fontText.setPreferredSize(new Dimension(200,20));
+        final JTextField styleText=new JTextField(8);
+        styleText.setPreferredSize(new Dimension(200,20));
+        final int style[]={Font.PLAIN,Font.BOLD,Font.ITALIC,Font.BOLD+Font.ITALIC};
+        final JTextField sizeText=new JTextField(5);
+        sizeText.setPreferredSize(new Dimension(200,20));
+        JButton okButton=new JButton("Confirm");
+        JButton cancel=new JButton("Cancel");
+        cancel.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                fontDialog.dispose();
+            }
+        });
+        Font currentFont=editArea.getFont();
+        fontText.setText(currentFont.getFontName());
+        fontText.selectAll();
+        if(currentFont.getStyle()==Font.PLAIN)
+            styleText.setText("PLAIN");
+        if(currentFont.getStyle()==Font.BOLD)
+            styleText.setText("BOLD");
+        if(currentFont.getStyle()==Font.ITALIC)
+            styleText.setText("ITALIC");
+        if(currentFont.getStyle()==Font.ITALIC+Font.BOLD)
+            styleText.setText("BOLD ITALIC");
+        styleText.selectAll();
+        String str=editArea.getFont().toString();
+        String token[] = str.split(",");
+        str=token[3];
+        token=str.split("[=\\]]");
+        str=token[1];
+        sizeText.setText(str);
+        sizeText.selectAll();
+        final JList fontList,styleList,sizeList;
+        GraphicsEnvironment ge =GraphicsEnvironment.getLocalGraphicsEnvironment();
+        final String fontName[]=ge.getAvailableFontFamilyNames();
+        fontList = new JList(fontName);
+        fontList.setFixedCellHeight(20);
+        fontList.setFixedCellWidth(86);
+        fontList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        final String styleName[]={"PLAIN","BOLD","ITALIC","BOLD ITALIC"};
+        styleList = new JList(styleName);
+        styleList.setFixedCellWidth(86);
+        styleList.setFixedCellHeight(20);
+        styleList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        if(currentFont.getStyle()==Font.PLAIN)
+            styleList.setSelectedIndex(0);
+        else if(currentFont.getStyle()==Font.BOLD)
+            styleList.setSelectedIndex(1);
+        else if(currentFont.getStyle()==Font.ITALIC)
+            styleList.setSelectedIndex(2);
+        else if(currentFont.getStyle()==(Font.BOLD+Font.ITALIC))
+            styleList.setSelectedIndex(3);
+        final String fontSize[]={"8","9","10","11","12","14","16","18","20","22","24","26","28","36","48","72"};
+        sizeList = new JList(fontSize);
+        sizeList.setFixedCellWidth(86);
+        sizeList.setFixedCellHeight(20);
+        sizeList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        fontList.addListSelectionListener(new ListSelectionListener() {
+            @Override
+            public void valueChanged(ListSelectionEvent e) {
+                fontText.setText(fontName[fontList.getSelectedIndex()]);
+                fontText.selectAll();
+                Font sampleFont1=new Font(fontText.getText(),style[styleList.getSelectedIndex()],Integer.parseInt(sizeText.getText()));
+                sample.setFont(sampleFont1);
+                styleList.setFont(sampleFont1);
+            }
+        });
+        styleList.addListSelectionListener(new ListSelectionListener(){
+            @Override
+            public void valueChanged(ListSelectionEvent e) {
+                int s=style[styleList.getSelectedIndex()];
+                styleText.setText(styleName[s]);
+                styleText.selectAll();
+                Font sampleFont2=new Font(fontText.getText(),style[styleList.getSelectedIndex()],Integer.parseInt(sizeText.getText()));
+                sample.setFont(sampleFont2);
+            }
+        });
+        sizeList.addListSelectionListener(new ListSelectionListener() {
+            public void valueChanged(ListSelectionEvent event)
+            {   sizeText.setText(fontSize[sizeList.getSelectedIndex()]);
+                //sizeText.requestFocus();
+                sizeText.selectAll();
+                Font sampleFont3=new Font(fontText.getText(),style[styleList.getSelectedIndex()],Integer.parseInt(sizeText.getText()));
+                sample.setFont(sampleFont3);
+            }
+        });
+        okButton.addActionListener(new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                Font okfont=new Font(fontText.getText(),style[styleList.getSelectedIndex()],Integer.parseInt(sizeText.getText()));
+                editArea.setFont(okfont);
+                fontDialog.dispose();
+            }
+        });
+        con.add(fontLabel);
+        fontLabel.setBounds(5,10,150,20);
+        con.add(styleLabel);
+        styleLabel.setBounds(160,10,145,20);
+        con.add(sizeLabel);
+        sizeLabel.setBounds(310,10,50,20);
+        con.add(fontText);
+        fontText.setBounds(5,25,150,20);
+        con.add(styleText);
+        styleText.setBounds(160,25,145,20);
+        con.add(sizeText);
+        sizeText.setBounds(310,25,80,20);
+        JScrollPane fList=new JScrollPane(fontList);
+        con.add(fList);
+        fList.setBounds(5,45,150,160);
+        JScrollPane yList=new JScrollPane(styleList);
+        con.add(yList);
+        yList.setBounds(160,45,145,160);
+        JScrollPane sList=new JScrollPane(sizeList);
+        con.add(sList);
+        sList.setBounds(310,45,80,160);
+        sList.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+
+        JPanel sp =new JPanel();
+        sp.add(sample,BorderLayout.CENTER);
+        sp.setBorder(BorderFactory.createTitledBorder("Example"));
+        con.add(sp);
+        sp.setBounds(270,250,100,50);
+        Box buttonBox= Box.createHorizontalBox();
+        buttonBox.add(Box.createGlue());
+        buttonBox.add(okButton);
+        buttonBox.add(Box.createHorizontalStrut(7));
+        buttonBox.add(cancel);
+        buttonBox.setBounds(5,380,390,25);
+        con.add(buttonBox);
+        fontDialog.setSize(400,500);
+        fontDialog.setLocation(200,200);
+        fontDialog.setResizable(false);
+        fontDialog.setVisible(true);
+    }
+
+
+    @Override
+    public void actionPerformed(ActionEvent e) {
+        if(e.getSource()==fileMenu_New){
+            editArea.requestFocus();
+            String currentValue=editArea.getText();
+            boolean isTextChanged = currentValue.equals(oldValue)?false:true;
+            if(isTextChanged){
+                int saveChoose=JOptionPane.showConfirmDialog(this,"Whether to save the" +
+                        "changes to untitled?","Prompt",JOptionPane.YES_NO_CANCEL_OPTION);
+                if(saveChoose==JOptionPane.YES_OPTION){
+                    saveFile();
+                    newFile();
+                }
+                else if(saveChoose==JOptionPane.NO_OPTION){//If no, new file directly
+                    newFile();
+                }
+                else if(saveChoose== JOptionPane.CANCEL_OPTION)
+                    return;
+            }else{//If there is no changes new file directly
+                newFile();
+            }
+
+        }//End of new file
+
+        else if(e.getSource()==fileMenu_Open){
+            editArea.requestFocus();
+            String currentValue=editArea.getText();
+            boolean isTextChanged = currentValue.equals(oldValue)?false:true;
+            if(isTextChanged){
+                int saveChoose=JOptionPane.showConfirmDialog(this,"Whether to save the" +
+                        "changes to untitled?","Prompt",JOptionPane.YES_NO_CANCEL_OPTION);
+                if(saveChoose==JOptionPane.YES_OPTION){
+                    saveFile();
+                    openFile();
+                }
+                else if(saveChoose==JOptionPane.NO_OPTION){//If no, new file directly
+                    openFile();
+                }
+                else if(saveChoose== JOptionPane.CANCEL_OPTION)
+                    return;
+            }else{//If there is no changes new file directly
+                openFile();
+            }
+        }//End of open file
+
+        else if(e.getSource()==fileMenu_Save){
+            editArea.requestFocus();
+            saveFile();
+        }//End of Save
+        else if(e.getSource()==fileMenu_SaveAs){
+            saveAs();
+        }//End of Save as
+        else if (e.getSource() == fileMenu_PageSetUp) {
+            JOptionPane.showMessageDialog(this,"This feature has not yet been implemented",
+                    currentFile.getName()+ " - NotePad",JOptionPane.WARNING_MESSAGE);
+        }//End of Page setup
+        else if (e.getSource() == fileMenu_Print) {
+            JOptionPane.showMessageDialog(this, "This feature has not yet been implemented",
+                    currentFile.getName() + " - NotePad", JOptionPane.WARNING_MESSAGE);
+        }//End of Print
+        else if (e.getSource() == fileMenu_Exit) {
+            exitWindowChoose();
+        }//End of exit
+
+        //Edit
+        else if(e.getSource() == editMenu_Undo||e.getSource()==popupMenu_Undo){
+            editArea.requestFocus();
+            if (undo.canUndo()) {
+                try {
+                    undo.undo();
+                }catch (CannotUndoException ex){
+                    System.out.println("Unable to undo" + ex);
+                }
+            }else{
+                editMenu_Undo.setEnabled(false);
+                popupMenu_Undo.setEnabled(false);
+            }
+        }//End of undo
+        else if(e.getSource() == editMenu_Cut||e.getSource()==popupMenu_Cut){
+            editArea.requestFocus();
+            String text = editArea.getSelectedText();
+            StringSelection selection = new StringSelection(text);
+            clipboard.setContents(selection, null);
+            editArea.replaceRange("",editArea.getSelectionStart(),editArea.getSelectionEnd());
+            checkMenuItemEnabled();
+        }//End of Cut
+        else if (e.getSource() == editMenu_Copy || e.getSource() == popupMenu_Copy) {
+            editArea.requestFocus();
+            String text = editArea.getSelectedText();
+            StringSelection selection = new StringSelection(text);
+            clipboard.setContents(selection, null);
+            checkMenuItemEnabled();
+        }//End of copy
+        else if(e.getSource() ==editMenu_Paste||e.getSource()==popupMenu_Paste){
+            editArea.requestFocus();
+            Transferable contents = clipboard.getContents(this);
+            if(contents==null) return;
+            String text="";
+            try{
+                text=(String)contents.getTransferData(DataFlavor.stringFlavor);
+            }catch(Exception ex){}
+            if(editArea.getSelectedText()==null){
+                editArea.insert(text,editArea.getCaretPosition());
+            }
+            else{
+                editArea.replaceRange(text, editArea.getSelectionStart(), editArea.getSelectionEnd());
+            }
+            checkMenuItemEnabled();
+        }//End of paste
+        else if(e.getSource()==editMenu_Delete||e.getSource()==popupMenu_Delete){
+            editArea.requestFocus();
+            editArea.replaceRange("",editArea.getSelectionStart(),editArea.getSelectionEnd());
+            checkMenuItemEnabled();
+        }//End of delete
+        else if(e.getSource()==editMenu_Find){
+            editArea.requestFocus();
+            find();
+        }//End of find
+        else if(e.getSource()==editMenu_FindNext){
+            editArea.requestFocus();
+            //find();//Need to improve
+            int k=0;
+            final String str1,str2;
+            str1=editArea.getText();
+            str2=findContent;
+//            strA=str1;
+//            strB=str2;
+            if(editArea.getSelectedText()==null)
+                k=str1.indexOf(str2,editArea.getCaretPosition()+1);
+            else
+                k=str1.indexOf(str2, editArea.getCaretPosition()-str2.length()+1);
+            if(k>-1)
+            {   //String strData=strA.subString(k,strB.getText().length()+1);
+                editArea.setCaretPosition(k);
+                editArea.select(k,k+str2.length());
+            }
+            else
+            {   JOptionPane.showMessageDialog(null,"Can't find"+
+                    str2,"查找",JOptionPane.INFORMATION_MESSAGE);
+            }
+        }//End of find next
+        else if (e.getSource() == editMenu_Replace) {
+            editArea.requestFocus();
+            replace();
+        }//End of replace
+        else if (e.getSource() == editMenu_GoTo) {
+            JOptionPane.showMessageDialog(this,"The feature has not yet been implemented",
+                    "go to...",JOptionPane.WARNING_MESSAGE);
+        }//End of goto
+        else if(e.getSource()==editMenu_TimeDate){
+            editArea.requestFocus();
+            java.util.Calendar rightNow=Calendar.getInstance();
+            Date date=rightNow.getTime();
+            editArea.insert(date.toString(),editArea.getCaretPosition());
+        }//End of time&&date
+        else if (e.getSource() == editMenu_SelectAll || e.getSource() == popupMenu_SelectAll) {
+            editArea.selectAll();
+        }//End of select all
+        else if(e.getSource()==formatMenu_LineWrap){
+            if (formatMenu_LineWrap.getState()) {
+                editArea.setLineWrap(true);
+            }else
+                editArea.setLineWrap(false);
+        }//End of line wrap
+        else if (e.getSource() == formatMenu_Font) {
+            editArea.requestFocus();
+            font();
+        }//End of font
+        else if (e.getSource() == helpMenu_HelpTopics) {
+            editArea.requestFocus();
+            JOptionPane.showMessageDialog(this,"Don't know how to use a notepad?\n"+
+            "Then you must contact the computer for the first time.\n Suggest you beginning with our card games",
+                    "Help",JOptionPane.INFORMATION_MESSAGE);
+        }//End of help topic
+        else if (e.getSource() == helpMenu_AboutNotePad) {
+            editArea.requestFocus();
+            JOptionPane.showMessageDialog(this,
+                    "+++++++++++++++++++++++++++++++++++++++++++++++\n" +
+                            "+NotePad for normal users                                                          +\n" +
+                            "+Author: Drafting_dreams                                                            +\n" +
+                            "+Version: Testing 1.0                                                                    +\n" +
+                            "+Copyright(C) 2017 XMU LXY                                                      +\n" +
+                            "+++++++++++++++++++++++++++++++++++++++++++++++",
+                    "About notepad",JOptionPane.INFORMATION_MESSAGE);
+        }//End of about notepad
+    }//End of Action perform for this NotePad
+
+    public void newFile(){editArea.replaceRange("",0,editArea.getText().length());
+        this.setTitle("Untitled - NotePad");
+        statusLabel.setText("New file");
+        isNewFile=true;
+        oldValue=editArea.getText();
+        editMenu_Undo.setEnabled(false);
+        popupMenu_Undo.setEnabled(false);
+        undo.discardAllEdits();}
+
+    public void openFile(){
+        String str =null;
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
+        fileChooser.setDialogTitle("Open file");
+        int result = fileChooser.showOpenDialog(this);
+        if (result == JFileChooser.CANCEL_OPTION) {
+            return;
+        }
+        File fileName = fileChooser.getSelectedFile();
+        if(fileName==null||fileName.getName().equals(""))
+            JOptionPane.showMessageDialog(this, "Illegal filename",
+                    "Error prompt", JOptionPane.ERROR_MESSAGE);
+        else{
+            try{
+                FileReader fr= new FileReader(fileName);
+                BufferedReader bfr = new BufferedReader(fr);
+                editArea.setText("");
+                str=bfr.readLine();
+                while(str!=null){
+                    editArea.append(str);
+                    if((str=bfr.readLine())!=null)
+                        editArea.append("\n");
+                }
+                this.setTitle(fileName.getName()+" - NotePad");
+                fr.close();
+                isNewFile=false;
+                statusLabel.setText("Current open file:"+fileName.getAbsoluteFile());
+                oldValue=editArea.getText();
+            }catch (IOException ioException){}
+        }
+    }
+
+    public void saveFile(){
+        if(isNewFile){//If this is a new file, we need to name it first and choose a file to save it.
+            //If else, we just save it directly
+            JFileChooser fileChooser = new JFileChooser();
+            fileChooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
+            fileChooser.setDialogTitle("Save");
+
+            int result = fileChooser.showSaveDialog(this);//Show a window to choose file.
+            if(result==JFileChooser.CANCEL_OPTION)
+                return;
+            File saveFileName=fileChooser.getSelectedFile();
+            if(saveFileName==null||saveFileName.getName().equals("")){
+                JOptionPane.showMessageDialog(this,"Illegal file name",
+                        "Error prompt",JOptionPane.ERROR_MESSAGE);
+            }else{//When there is nothing wrong, save the file.
+                try{
+                    FileWriter fw=new FileWriter(saveFileName);
+                    BufferedWriter bfw=new BufferedWriter(fw);
+                    bfw.write(editArea.getText(),0,editArea.getText().length());
+                    bfw.flush();
+                    fw.close();
+
+                    isNewFile=false;
+                    currentFile=saveFileName;
+                    oldValue=editArea.getText();
+
+                    this.setTitle(saveFileName.getName()+"  - NotePad");
+                    statusLabel.setText("  The file currently opened:"+saveFileName.getAbsoluteFile());
+                }catch (IOException e){}
+            }
+        }else{//This is not a new file, save it directly!
+            try {
+                FileWriter fw = new FileWriter(currentFile);
+                BufferedWriter bfw = new BufferedWriter(fw);
+                bfw.write(editArea.getText(), 0, editArea.getText().length());
+                bfw.flush();
+                fw.close();
+
+                oldValue=editArea.getText();
+            }catch (IOException e){}
+        }
+    }
+
+    public void saveAs(){
+        editArea.requestFocus();
+        String str=null;
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
+        fileChooser.setDialogTitle("Save as");
+        int result = fileChooser.showSaveDialog(this);
+        if (result == JFileChooser.CANCEL_OPTION) {
+            return;
+        }
+        File saveFilename= fileChooser.getSelectedFile();
+        if (saveFilename.getName().equals("") || saveFilename == null) {
+            JOptionPane.showMessageDialog(this,"Illegal filename",
+                    "Illegal filename",JOptionPane.ERROR_MESSAGE);
+        }else{
+            try{
+                FileWriter fw = new FileWriter(saveFilename);
+                BufferedWriter bfw = new BufferedWriter(fw);
+                bfw.write(editArea.getText(), 0, editArea.getText().length());
+                bfw.flush();
+                bfw.close();
+                oldValue=editArea.getText();
+                this.setTitle(saveFilename.getName() + " - NotePad");
+                statusLabel.setText(" Current open file:" + saveFilename.getName());
+            }catch(IOException ioException){}
+        }
+    }//End of saveAs
+
+
+    //Implement the functions in Document Listener(About undo operation)
+    @Override
+    public void insertUpdate(DocumentEvent e) {
+        editMenu_Undo.setEnabled(true);
+        popupMenu_Undo.setEnabled(true);
+        getCPosition();
+    }
+
+    @Override
+    public void removeUpdate(DocumentEvent e) {
+        editMenu_Undo.setEnabled(true);
+        popupMenu_Undo.setEnabled(true);
+        getCPosition();
+    }
+
+    @Override
+    public void changedUpdate(DocumentEvent e) {
+        editMenu_Undo.setEnabled(true);
+        popupMenu_Undo.setEnabled(true);
+        getCPosition();
+    }
+
+    //Implement class UndoHandler in interface UndoableEditListener(About undo operation)
+    class UndoHandler implements  UndoableEditListener{
+
+        @Override
+        public void undoableEditHappened(UndoableEditEvent e) {
+            undo.addEdit(e.getEdit());
+        }
+    }
+
+    //Get caret position(row,col)
+    void getCPosition(){
+        int pos=editArea.getCaretPosition();
+            try {
+                editArea.requestFocus();
+                int row = editArea.getLineOfOffset(pos);
+                int col=pos-editArea.getLineStartOffset(row)+1 ;
+                row+=1;
+                positionLabel.setText("Row:" + row +
+                        "   Col:" + col);
+            }catch(BadLocationException ex){
+                positionLabel.setText("Can't get caret postion");}
+        }
+
+}
